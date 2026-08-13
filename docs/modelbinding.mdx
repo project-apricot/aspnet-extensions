@@ -1,0 +1,80 @@
+---
+title: Model binding
+description: Requiring a query-string key at the routing layer, and turning form binding off.
+---
+
+# Model binding
+
+Two attributes that change how MVC selects and binds an action.
+
+## Requiring a query-string key
+
+`[RequiredFromQuery]` binds a parameter from the query string like `[FromQuery]`, and additionally
+makes the action match only when that key is present.
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.ModelBinding;
+
+[HttpGet]
+public IActionResult GetById([RequiredFromQuery] string id) => this.Ok(store.Find(id));
+
+[HttpGet]
+public IActionResult Search([RequiredFromQuery] string query) => this.Ok(store.Search(query));
+```
+
+Two actions, one route, told apart by which key the caller sent. `?id=42` reaches the first and
+`?query=report` the second, which plain `[FromQuery]` cannot express — both actions would match every
+request and the route would fail as ambiguous.
+
+> **Warning.** The keys must be mutually exclusive in practice. A request sending **both** `?id=42`
+> and `?query=report` satisfies both constraints, matches both actions, and ASP.NET Core throws
+> `AmbiguousMatchException` — a `500`. The constraint can only add a requirement; it cannot express
+> "this key and not that one". Where a caller might plausibly send both, give the actions distinct
+> routes instead, or keep one action and branch inside it.
+
+Pass a name to require a different key from the parameter's own:
+
+```csharp
+[HttpGet("by-slug")]
+public IActionResult GetBySlug([RequiredFromQuery("report-slug")] string slug) => this.Ok(slug);
+```
+
+> **Warning.** The requirement is enforced by **routing**, not validation, so a request missing the
+> key matches no action and the answer is `404 Not Found` — not `400 Bad Request`. That is the right
+> answer when the key selects between actions, and the wrong one when there is a single action and the
+> caller simply forgot a parameter. In that case use an ordinary `[FromQuery]` and mark it required for
+> validation instead.
+
+Only presence is checked, so `?id=` satisfies the constraint and the empty value then goes through
+model binding and validation as usual. Whether the value is *usable* is not a routing question, and
+failing here would report a missing route rather than a bad value.
+
+The constraint runs after the framework's own, which sit at or below order 100, so HTTP method and
+content-type matching still decide first and this only narrows a candidate that already matched.
+
+## Turning form binding off
+
+`[DisableFormValueModelBinding]` stops MVC reading the request body as a form, leaving it intact for
+the action to stream.
+
+```csharp
+[HttpPost("upload")]
+[DisableFormValueModelBinding]
+public async Task<IActionResult> Upload(CancellationToken cancellationToken)
+{
+    var fields = await this.Request.StreamFilesAsync(HandleAsync, cancellationToken);
+
+    return this.Ok(new { Fields = fields.Keys });
+}
+```
+
+It removes the three value provider factories that read a form — `FormValueProviderFactory`,
+`FormFileValueProviderFactory` and `JQueryFormValueProviderFactory` — and leaves every other factory
+alone, so route, query and header binding on the same action keep working.
+
+> **Note.** Required on any action doing its own multipart reading. Model binding buffers the whole
+> body to populate the form collection, and once it has, the body cannot be read again — a streaming
+> action without this attribute finds nothing there. See [uploads](uploads).
+
+The attribute applies to a class or a method, and nothing needs restoring afterwards: the factory list
+is built per request, so a removal cannot leak into another one.

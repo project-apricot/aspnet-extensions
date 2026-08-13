@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>General-purpose ASP.NET Core extensions: streaming multipart uploads that never buffer the request, query-string parameters required at the routing layer, any-origin CORS, forwarded-header and secure-cookie policies, and configuration and HttpContext helpers.</Description>
+    <PackageTags>aspnetcore;extensions;upload;multipart;cors;modelbinding;cookies</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>

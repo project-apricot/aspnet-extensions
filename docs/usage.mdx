@@ -1,0 +1,131 @@
+---
+title: Usage
+description: CORS, forwarded headers, cookie policy, configuration binding and HttpContext helpers.
+---
+
+# Usage
+
+The host-configuration and helper parts of the library. Uploads and model binding have pages of
+their own: [uploads](uploads), [model binding](modelbinding).
+
+## CORS
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.Cors;
+
+builder.Services.AddAnyOriginCors();
+
+app.UseCors(CorsExtensions.DefaultPolicyName);
+```
+
+`AddAnyOriginCors()` registers a policy allowing any origin, method and header, under the name
+`CorsExtensions.DefaultPolicyName` — the string `DefaultCorsPolicy`. That value is part of the
+library's contract, so an application may name the policy in configuration or in an `[EnableCors]`
+attribute. Pass your own name to the overload if you would rather not depend on it.
+
+> **Warning.** This policy cannot carry credentials. CORS forbids answering a credentialed request
+> with `Access-Control-Allow-Origin: *`, and ASP.NET Core enforces that rather than leaving it to the
+> browser: adding `AllowCredentials` to a wildcard-origin policy throws `InvalidOperationException`
+> when the policy is built. Name the permitted origins explicitly when cookies or an `Authorization`
+> header have to survive the request.
+
+## Forwarded headers
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.Forwarding;
+
+builder.Services.AddForwardingConfiguration();
+
+app.UseForwardedHeaders();
+```
+
+Honours `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`, so `Request.Scheme`,
+`Request.Host` and `Connection.RemoteIpAddress` describe the original client rather than the proxy.
+
+The middleware call is not made for you, because ordering matters: `UseForwardedHeaders` has to come
+before anything that reads the scheme or the client address, redirect-to-HTTPS and rate limiting
+included.
+
+> **Warning.** This clears `KnownProxies` and `KnownIPNetworks`, which means forwarded headers are
+> accepted from **any** peer. The defaults trust loopback only, and would drop every header when the
+> proxy is a separate container at an address the application cannot know in advance — but trusting
+> everything is safe only while the application is unreachable except through that proxy. Anything
+> that can connect directly may otherwise choose its own apparent IP address, scheme and host, and
+> anything downstream that logs a client IP or makes a decision from it will believe the answer.
+
+Where the deployment does know its proxies, narrow it back down. The callback runs *after* the lists
+are cleared, so it can add real entries:
+
+```csharp
+builder.Services.AddForwardingConfiguration(options =>
+{
+    options.KnownIPNetworks.Add(new IPNetwork(IPAddress.Parse("10.0.0.0"), 8));
+});
+```
+
+Note `System.Net.IPNetwork`, not the `Microsoft.AspNetCore.HttpOverrides` type of the same name —
+the older `KnownNetworks` property that used it is obsolete.
+
+## Cookie policy
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.Cookies;
+
+builder.Services.AddSecureCookiePolicy();
+
+app.UseCookiePolicy();
+```
+
+Every cookie the application writes gets `Secure`, whether or not it asked for it. Each cookie's own
+`SameSite` value is left exactly as set, because the policy raises the floor rather than overriding
+the decision.
+
+> **Note.** Earlier versions of this library, under its previous name, sniffed the `User-Agent` here
+> and downgraded `SameSite=None` to unspecified for Chrome 51–66, iOS 12 and macOS 10.14 Safari. That
+> is gone. Those browsers are long out of use, and the check was a substring test for `Chrome/5` and
+> `Chrome/6` — which matches Chrome 512 as readily as Chrome 51, and would have quietly weakened
+> cookies on a current browser.
+
+Calling `Configure<CookiePolicyOptions>` afterwards composes with this, and the later value wins.
+
+## Configuration
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.Configuration;
+
+var storage = builder.Configuration.BindAs<StorageSettings>("Storage");
+```
+
+Binds a section to a new instance in one call. A missing or empty section yields an instance carrying
+only its own defaults, never `null`, so there is no case to guard.
+
+> **Note.** The result is a detached snapshot taken at the moment of the call. For settings that
+> should follow configuration reloads, use `services.AddOptions<T>().Bind(...)` instead. `BindAs` is
+> for code that just needs the values now — during startup, most often.
+
+## HttpContext helpers
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.Http;
+
+var values = context.Request.Query.ToValuesDictionary();
+var tenant = context.GetItemOrDefault("tenant", Tenant.Anonymous);
+```
+
+`ToValuesDictionary` flattens a query string for handing on to something loosely typed — an OAuth
+callback forwarded as JSON, say. A key given once collapses to its value, a repeated key becomes a
+`List<string>`, and a key present with no value maps to an empty string:
+
+| Query | Result |
+| --- | --- |
+| `?code=abc` | `code` → `"abc"` |
+| `?scope=read&scope=write` | `scope` → `["read", "write"]` |
+| `?code=` or `?flag` | `code` → `""` |
+
+Keys are compared case insensitively, as they are in the query collection itself, so a lookup here
+answers whatever a lookup on the request would have.
+
+`GetItemOrDefault` reads `HttpContext.Items` and falls back when the item is absent, null, or of
+another type entirely. That last case matters: two unrelated components can pick the same key, and
+one of them reading it should not throw. Passing a non-null default makes the result non-null too, so
+no null check is needed at the call site.

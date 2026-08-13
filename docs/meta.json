@@ -1,0 +1,5 @@
+{
+  "title": "ASP.NET Core Extensions",
+  "description": "General-purpose ASP.NET Core extensions: streaming uploads, routing, CORS, forwarding and cookies.",
+  "pages": ["index", "usage", "uploads", "modelbinding"]
+}
