@@ -1,0 +1,150 @@
+---
+title: Uploads
+description: Reading a multipart request section by section, without buffering it.
+---
+
+# Uploads
+
+`StreamFilesAsync` reads a multipart body one section at a time. Files are handed to a callback as
+they arrive and never held, so the memory an upload costs does not grow with its size — a request
+larger than available memory is fine, provided the callback streams rather than collects.
+
+## The shape
+
+```csharp
+using ApricotFramework.AspNetCore.Extensions.ModelBinding;
+using ApricotFramework.AspNetCore.Extensions.Uploads;
+
+[HttpPost("upload")]
+[DisableFormValueModelBinding]
+public async Task<IActionResult> Upload(CancellationToken cancellationToken)
+{
+    var fields = await this.Request.StreamFilesAsync(
+        file => blobStore.WriteAsync(file.FileName, file.OpenReadStream(), cancellationToken),
+        cancellationToken);
+
+    return this.Ok(new { Title = fields["title"].ToString() });
+}
+```
+
+The callback runs once per file section. The return value is the request's **non-file** fields, in
+the order they were declared, as an ordinary `IFormCollection`.
+
+> **Warning.** `[DisableFormValueModelBinding]` is not optional on an MVC action. Model binding
+> buffers the whole body to build the form collection, and a body cannot be read twice — so without
+> it there is nothing left to stream. The attribute is described on the
+> [model binding](modelbinding) page.
+
+## How large a file can be
+
+This library sets no ceiling on a file. It leaves `MultipartReader.BodyLengthLimit` unset, and each
+file is handed over as a stream, so nothing here has to hold one.
+
+**The limit you will actually hit is the server's.** Kestrel caps a request body at **30 MB**
+(`30000000` bytes) by default, and rejects anything larger with `413 Payload Too Large` before your
+callback runs.
+
+```csharp
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 2048L * 1024 * 1024;   // 2 GB, or null for no limit
+});
+```
+
+> **Warning.** `Limits` is **not** bound from the `Kestrel` configuration section, unlike `Endpoints`
+> and `Certificates`. Setting `Kestrel:Limits:MaxRequestBodySize` in `appsettings.json` or as an
+> environment variable is silently ignored; it has to be set in code.
+
+With the cap raised, 1 GB through a single request completes in about a second and process memory does
+not move — measured, not assumed. What matters is the callback: streaming it onward costs nothing,
+while `CopyToAsync` into a `MemoryStream` reintroduces the whole file.
+
+`FormOptions.MultipartBodyLengthLimit`, the 128 MB cap you may have met elsewhere, does **not** apply.
+It belongs to `ReadFormAsync`, which this bypasses entirely.
+
+The other limits worth knowing, none of which is about file size:
+
+| Limit | Value | Set by |
+| --- | --- | --- |
+| Request body | 30 MB | Kestrel, adjustable above |
+| Per-action override | — | `[RequestSizeLimit]` / `[DisableRequestSizeLimit]` on an MVC action |
+| Field value length | 4 MB | this library |
+| Field count | 1024 | this library |
+| Section header length | 16 KB | the framework's reader |
+| Boundary length | 128 characters | this library |
+
+## Two rules about the file stream
+
+A file is only readable for the duration of its callback. The next section cannot be reached until
+this one has been consumed, so a reference kept past the callback points at a stream that has already
+moved on.
+
+Reading the next section drains whatever the callback left, so ignoring a file, or reading only part
+of it, is safe — the sections after it are still found correctly.
+
+## Length is not available
+
+`IFormFile.Length` reports `MultipartFile.UnknownLength`, which is `-1`.
+
+> **Note.** This is inherent, not a shortcut. A multipart section is read forward only over the
+> request body, so nothing knows its size until it has been consumed — the client does not declare
+> per-part lengths. Asking the underlying stream would throw `NotSupportedException`, which is what
+> this library did before it was ported. Count the bytes as you copy them if you need a total.
+
+## Fields
+
+Non-file sections are collected rather than streamed, so unlike files they are bounded — see the table
+above for the values.
+
+> **Note.** The 4 MB field cap is stricter than the framework. `ReadFormAsync` does not apply
+> `ValueLengthLimit` to multipart field values, so it will happily read an 8 MB field into a string;
+> this rejects it. The size of a field is the client's choice, and reading one to its end
+> unconditionally lets a single request decide how much memory to allocate.
+
+A section header limit of 16 KB is also what bounds field *names*, since a name arrives inside
+`Content-Disposition`. A section declaring no name at all is skipped rather than filed under an empty
+key.
+
+Character encoding comes from each section's own `charset`, falling back to UTF-8 when it declares
+none or declares something unparseable.
+
+## Binding the fields to a model
+
+```csharp
+using System.Globalization;
+
+var values = fields.ToValueProvider(CultureInfo.InvariantCulture);
+```
+
+`ToValueProvider` presents the collected fields as an MVC `IValueProvider`, which is what
+`TryUpdateModelAsync` consumes.
+
+> **Note.** The culture is deliberately required. `CultureInfo.CurrentCulture` matches what MVC's own
+> form value provider uses; `CultureInfo.InvariantCulture` is usually what you want for fields that
+> came off the wire rather than from a keyboard, so a decimal or a date is not read differently
+> depending on where the server runs.
+
+## Errors
+
+| Exception | Means |
+| --- | --- |
+| `InvalidOperationException` | Not a multipart request, or the body was already consumed |
+| `InvalidDataException` | Malformed body, or a limit above exceeded |
+| `IOException` | The body ended early, or the connection was lost |
+
+An empty or already-consumed body reports the likely cause by name, because reading it as an empty
+upload — which this library used to do — hides a wiring mistake behind a successful response.
+
+> **Warning.** Every one of these describes a bad request rather than a server fault, but ASP.NET
+> Core turns none of them into a `400` on its own, no more than it does for its own `ReadFormAsync`.
+> Map them yourself if a malformed upload should not be reported as a 500.
+
+## Behaviour worth knowing
+
+Verified against bodies produced by `curl`, not by this library:
+
+- A file name containing quotes and semicolons is preserved verbatim; it cannot break out of the
+  header it arrived in.
+- A body containing what looks like its own boundary is read as data, not as a section break.
+- A zero-byte file is a file, and the callback runs for it.
+- Non-ASCII file names and content survive unchanged.
