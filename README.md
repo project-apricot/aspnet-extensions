@@ -61,4 +61,4 @@ except through the proxy — anything able to connect directly can otherwise cho
 IP address, scheme and host. Pass a callback to name the real proxies where the deployment allows
 it.
 
-Full documentation: <https://projectapricot.dev>
+Full documentation: <https://projectapricot.dev/docs/aspnet-extensions>

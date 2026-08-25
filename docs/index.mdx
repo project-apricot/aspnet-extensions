@@ -44,15 +44,15 @@ anything; there is no single namespace holding all of it.
 
 Most of this library is a shortcut for something you could write inline. Two parts are not:
 
-[**Uploads**](uploads) reads a multipart body as a stream, so a request larger than available memory
+[**Uploads**](./uploads.mdx) reads a multipart body as a stream, so a request larger than available memory
 costs nothing to accept. It also bounds the work a client can ask for, which the framework's own form
 reader does not do for every field.
 
-[**Model binding**](modelbinding) makes a query-string key part of *routing* rather than validation,
+[**Model binding**](./modelbinding.mdx) makes a query-string key part of *routing* rather than validation,
 which is how two actions on one route are told apart — and which is why a missing key answers `404`
 rather than `400`.
 
 > **Warning.** `AddForwardingConfiguration` trusts forwarded headers from any peer. See
-> [usage](usage) for what that means and how to narrow it.
+> [usage](./usage.mdx) for what that means and how to narrow it.
 
-Continue with [usage](usage), [uploads](uploads) or [model binding](modelbinding).
+Continue with [usage](./usage.mdx), [uploads](./uploads.mdx) or [model binding](./modelbinding.mdx).

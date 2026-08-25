@@ -74,7 +74,7 @@ alone, so route, query and header binding on the same action keep working.
 
 > **Note.** Required on any action doing its own multipart reading. Model binding buffers the whole
 > body to populate the form collection, and once it has, the body cannot be read again — a streaming
-> action without this attribute finds nothing there. See [uploads](uploads).
+> action without this attribute finds nothing there. See [uploads](./uploads.mdx).
 
 The attribute applies to a class or a method, and nothing needs restoring afterwards: the factory list
 is built per request, so a removal cannot leak into another one.
